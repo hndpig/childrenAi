@@ -1,3 +1,6 @@
+# Build output temp files
+_*.txt
+
 # Maven
 target/
 D/
