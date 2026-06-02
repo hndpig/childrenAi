@@ -1,0 +1,29 @@
+# Maven
+target/
+D/
+pet-habit-gateway/D
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Env
+.env
+.env.local
+application-local.yml
+
+# Upload
+upload/

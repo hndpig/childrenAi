@@ -1,0 +1,186 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: pet-habit-gateway
+  main:
+    web-application-type: reactive
+  config:
+    import: optional:nacos:${spring.application.name}.yaml
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        group: DEFAULT_GROUP
+      config:
+        server-addr: ${NACOS_SERVER:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:}
+        group: DEFAULT_GROUP
+        file-extension: yaml
+        refresh-enabled: true
+      username: nacos
+      password: nacos
+
+    gateway:
+      routes:
+        # 认证接口 — 不限流，不鉴权
+        - id: auth
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/auth/**
+          filters:
+            - StripPrefix=0
+
+        # 用户服务
+        - id: user-service
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/user/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                redis-rate-limiter.requestedTokens: 1
+            - CircuitBreaker=userCB
+
+        # 宠物服务
+        - id: pet-service
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/pet/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+            - CircuitBreaker=petCB
+
+        # 习惯服务
+        - id: habit-service
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/habit/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+            - CircuitBreaker=habitCB
+
+        # 积分兑换服务 (限流更严格)
+        - id: reward-service
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/reward/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 5
+                redis-rate-limiter.burstCapacity: 10
+            - CircuitBreaker=rewardCB
+
+        # 对战服务
+        - id: battle-service
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/battle/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+            - CircuitBreaker=battleCB
+
+        # WebSocket 透传 (不限流，不熔断)
+        - id: websocket
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/ws/**
+
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+  # 审计表数据源（gateway 异步写入用）
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:4000}/pet_habit?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+mybatis-plus:
+  global-config:
+    db-config:
+      id-type: auto
+  configuration:
+    map-underscore-to-camel-case: true
+
+# ---- Resilience4j 熔断配置 ----
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+    instances:
+      userCB:
+        baseConfig: default
+      petCB:
+        baseConfig: default
+      habitCB:
+        baseConfig: default
+      rewardCB:
+        baseConfig: default
+      battleCB:
+        baseConfig: default
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: 3s
+
+# ---- JWT 配置 ----
+jwt:
+  secret: ${JWT_SECRET:change-me-in-production}
+  expiration: 604800  # 7 天
+
+# ---- Actuator / Prometheus ----
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,gateway
+  metrics:
+    tags:
+      application: pet-habit-gateway
+  tracing:
+    sampling:
+      probability: 1.0
+
+# ---- 报文记录配置 ----
+payload-log:
+  global-max-body-size: 4096           # 全局 body 上限(字节)
+  mask-fields: password,token,secret,jwt,phone,mobile  # 脱敏字段
+  mask-headers: authorization,cookie   # 脱敏 Header
+  config-refresh-interval: 6000          # 配置缓存刷新间隔(秒)
+  audit-thread-pool:
+    core-size: 4
+    max-size: 8
+    queue-capacity: 500
+
+logging:
+  level:
+    com.pethabit.gateway: DEBUG
+    org.springframework.cloud.gateway: INFO
+    com.alibaba.nacos: INFO

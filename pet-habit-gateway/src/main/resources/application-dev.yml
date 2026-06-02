@@ -1,0 +1,90 @@
+# 开发环境配置 — 本地无 Redis/MySQL 时的最小启动配置
+server:
+  port: 8082
+
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+      - org.mybatis.spring.boot.autoconfigure.MybatisPlusAutoConfiguration
+      - org.mybatis.spring.boot.autoconfigure.MybatisAutoConfiguration
+
+  cloud:
+    nacos:
+      discovery:
+        register-enabled: false
+      config:
+        import-check:
+          enabled: false
+    gateway:
+      routes:
+        # 简化路由：去掉了限流（需要Redis）
+        - id: auth
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/auth/**
+          filters:
+            - StripPrefix=0
+
+        - id: user-service
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/user/**
+          filters:
+            - CircuitBreaker=userCB
+
+        - id: pet-service
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/pet/**
+          filters:
+            - CircuitBreaker=petCB
+
+        - id: habit-service
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/habit/**
+          filters:
+            - CircuitBreaker=habitCB
+
+        - id: reward-service
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/reward/**
+          filters:
+            - CircuitBreaker=rewardCB
+
+        - id: battle-service
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/api/battle/**
+          filters:
+            - CircuitBreaker=battleCB
+
+        - id: websocket
+          uri: lb://pet-habit-server
+          predicates:
+            - Path=/ws/**
+
+  # 禁用数据源配置
+  datasource:
+    hikari:
+      allow-pool-suspension: false
+
+mybatis-plus:
+  global-config:
+    db-config:
+      id-type: auto
+
+# 禁用报文记录（需要MySQL写审计表）
+payload-log:
+  enabled: false
+
+logging:
+  level:
+    com.pethabit.gateway: DEBUG
+    org.springframework.cloud.gateway: INFO
+    com.alibaba.nacos: INFO
