@@ -6,7 +6,8 @@ target/
 D/
 pet-habit-gateway/D
 !.mvn/wrapper/maven-wrapper.jar
-
+.claude
+PRD-需求规格.md
 # IDE
 .idea/
 *.iml
