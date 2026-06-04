@@ -20,7 +20,12 @@
 
     <modules>
         <module>pet-habit-common</module>
-        <module>pet-habit-server</module>
+        <module>pet-habit-service-user</module>
+        <module>pet-habit-service-pet</module>
+        <module>pet-habit-service-habit</module>
+        <module>pet-habit-service-reward</module>
+        <module>pet-habit-service-battle</module>
+        <module>pet-habit-service-config</module>
         <module>pet-habit-gateway</module>
     </modules>
 
@@ -31,6 +36,7 @@
         <spring-cloud-alibaba.version>2023.0.1.0</spring-cloud-alibaba.version>
         <nacos-client.version>2.3.2</nacos-client.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <dubbo.version>3.2.13</dubbo.version>
     </properties>
 
     <dependencyManagement>
@@ -60,6 +66,45 @@
                 <groupId>com.baomidou</groupId>
                 <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
                 <version>${mybatis-plus.version}</version>
+            </dependency>
+
+            <!-- Dubbo -->
+            <dependency>
+                <groupId>org.apache.dubbo</groupId>
+                <artifactId>dubbo-spring-boot-starter</artifactId>
+                <version>${dubbo.version}</version>
+            </dependency>
+
+            <!-- 微服务模块版本管理 -->
+            <dependency>
+                <groupId>com.pethabit</groupId>
+                <artifactId>pet-habit-service-user</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.pethabit</groupId>
+                <artifactId>pet-habit-service-pet</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.pethabit</groupId>
+                <artifactId>pet-habit-service-habit</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.pethabit</groupId>
+                <artifactId>pet-habit-service-reward</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.pethabit</groupId>
+                <artifactId>pet-habit-service-battle</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.pethabit</groupId>
+                <artifactId>pet-habit-service-config</artifactId>
+                <version>${project.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

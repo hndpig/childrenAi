@@ -27,7 +27,7 @@ spring:
       routes:
         # 认证接口 — 不限流，不鉴权
         - id: auth
-          uri: lb://pet-habit-server
+          uri: lb://pet-habit-user
           predicates:
             - Path=/api/auth/**
           filters:
@@ -35,7 +35,7 @@ spring:
 
         # 用户服务
         - id: user-service
-          uri: lb://pet-habit-server
+          uri: lb://pet-habit-user
           predicates:
             - Path=/api/user/**
           filters:
@@ -48,7 +48,7 @@ spring:
 
         # 宠物服务
         - id: pet-service
-          uri: lb://pet-habit-server
+          uri: lb://pet-habit-pet
           predicates:
             - Path=/api/pet/**
           filters:
@@ -60,7 +60,7 @@ spring:
 
         # 习惯服务
         - id: habit-service
-          uri: lb://pet-habit-server
+          uri: lb://pet-habit-habit
           predicates:
             - Path=/api/habit/**
           filters:
@@ -72,7 +72,7 @@ spring:
 
         # 积分兑换服务 (限流更严格)
         - id: reward-service
-          uri: lb://pet-habit-server
+          uri: lb://pet-habit-reward
           predicates:
             - Path=/api/reward/**
           filters:
@@ -84,7 +84,7 @@ spring:
 
         # 对战服务
         - id: battle-service
-          uri: lb://pet-habit-server
+          uri: lb://pet-habit-battle
           predicates:
             - Path=/api/battle/**
           filters:
@@ -96,7 +96,7 @@ spring:
 
         # WebSocket 透传 (不限流，不熔断)
         - id: websocket
-          uri: lb://pet-habit-server
+          uri: lb://pet-habit-pet
           predicates:
             - Path=/ws/**
 
@@ -111,7 +111,7 @@ spring:
 
   # 审计表数据源（gateway 异步写入用）
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:4000}/pet_habit?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/pet_habit_gateway?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver

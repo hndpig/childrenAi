@@ -1,6 +1,6 @@
 # Pet-Habit API 网关 — 架构·功能·使用手册
 
-> 版本: 1.2 | 最后更新: 2026-05-31 | 模块: pet-habit-gateway
+> 版本: 1.3 | 最后更新: 2026-06-04 | 模块: pet-habit-gateway
 
 ---
 
@@ -51,11 +51,11 @@ API 网关是全部客户端请求的**唯一入口**，承担路由转发、安
 ### 1.3 依赖关系
 
 ```
-pom.xml (pet-habit-parent, Spring Boot 3.2.5 + Spring Cloud 2023.0.2 + Alibaba 2023.0.1)
+pom.xml (pet-habit-parent, Spring Boot 3.2.5 + Spring Cloud 2023.0.2 + Alibaba 2023.0.1 + Dubbo 3.2)
 ├── Nacos Server (注册中心 + 配置中心, standalone 模式)
-├── pet-habit-common (共享: Result, PushService, GlobalExceptionHandler)
-├── pet-habit-server  (业务服务, port 8081, 注册到 Nacos)
-└── pet-habit-gateway (网关, port 8080, 从 Nacos 发现服务)
+├── pet-habit-common      (共享: Result, PushService, SecurityConfig, Dubbo API)
+├── pet-habit-service-* ×6 (业务服务, :8082-8087, 注册到 Nacos)
+└── pet-habit-gateway      (网关, :8081, 从 Nacos 发现所有服务)
 ```
 
 ### 1.4 服务发现架构
@@ -66,18 +66,18 @@ pom.xml (pet-habit-parent, Spring Boot 3.2.5 + Spring Cloud 2023.0.2 + Alibaba 2
                     │  localhost:8848  │
                     └──────┬──────────┘
              ① register    │  ② discover
-              self:8081     │     pet-habit-server
+              self:8082-8087│     pet-habit-{user,pet,habit,reward,battle,config}
                     ┌──────┴──────────┐
                     │                 │
                     ▼                 ▼
-            ┌──────────────┐  ┌──────────────┐
-            │   Server     │  │   Gateway     │
-            │   :8081      │  │   :8080       │
-            │              │  │               │
-            │  注册为       │  │  ③ lb://pet-  │
-            │  pet-habit-  │  │    habit-server│
-            │  server      │  │   → :8081     │
-            └──────────────┘  └──────────────┘
+    ┌──────────────────────┐  ┌──────────────┐
+    │   6 Microservices     │  │   Gateway     │
+    │   :8082 ~ :8087      │  │   :8081       │
+    │                       │  │               │
+    │  user / pet / habit   │  │  ③ lb://pet-  │
+    │  reward / battle      │  │    habit-{svc} │
+    │  config               │  │   → 对应服务   │
+    └──────────────────────┘  └──────────────┘
 ```
 
 ---
@@ -95,10 +95,10 @@ pom.xml (pet-habit-parent, Spring Boot 3.2.5 + Spring Cloud 2023.0.2 + Alibaba 2
                         ┌──────────────┐
                         │    Nginx      │  TLS 终结 / 静态资源
                         └──────┬───────┘
-                               │  HTTP :8080
+                               │  HTTP :8081
                                ▼
                    ┌───────────────────────────┐
-                   │     API Gateway :8080      │
+                   │     API Gateway :8081      │
                    │                            │
                    │  ┌──────────────────────┐  │
                    │  │ 1. RequestLogFilter   │  │  ← TraceId 注入
@@ -113,26 +113,18 @@ pom.xml (pet-habit-parent, Spring Boot 3.2.5 + Spring Cloud 2023.0.2 + Alibaba 2
                    │  └──────────────────────┘  │
                    │                            │
                    │  路由引擎 (Path Predicate)  │
-                   └───────┬───────────────────┘
-                           │  HTTP :8081
-                           ▼
-                   ┌───────────────────────────┐
-                   │   pet-habit-server :8081   │
-                   │                            │
-                   │  ┌──────────────────────┐  │
-                   │  │ GatewayHeaderAuthFilter│  │  ← 读 X-User-Id
-                   │  │     构建 SecurityCtx   │  │     X-User-Role
-                   │  └──────────┬───────────┘  │
-                   │             ▼               │
-                   │  ┌──────────────────────┐  │
-                   │  │  SecurityConfig       │  │  ← @PreAuthorize
-                   │  │  (方法级角色鉴权)      │  │     角色控制
-                   │  └──────────┬───────────┘  │
-                   │             ▼               │
-                   │  ┌──────────────────────┐  │
-                   │  │  业务 Controller      │  │
-                   │  └──────────────────────┘  │
-                   └───────────────────────────┘
+                   └───┬───┬───┬───┬───┬───────┘
+                       │   │   │   │   │
+            ┌──────────┘   │   │   │   └──────────┐
+            ▼              ▼   ▼   ▼              ▼
+    ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+    │  user    │  │   pet    │  │  habit   │  │  reward  │
+    │  :8082   │  │  :8083   │  │  :8084   │  │  :8085   │
+    └──────────┘  └──────────┘  └──────────┘  └──────────┘
+            ┌──────────┐  ┌──────────┐
+            │  battle  │  │  config  │
+            │  :8086   │  │  :8087   │
+            └──────────┘  └──────────┘
 ```
 
 ### 2.2 鉴权分层
@@ -154,7 +146,7 @@ pom.xml (pet-habit-parent, Spring Boot 3.2.5 + Spring Cloud 2023.0.2 + Alibaba 2
   │  GET /api/pet/status
   │  Authorization: Bearer eyJ...
   ▼
-Gateway :8080
+Gateway :8081
   │
   ├─ RequestLogFilter   → [a1b2c3d4] --> GET /api/pet/status
   │                        X-Trace-Id 注入
@@ -166,10 +158,10 @@ Gateway :8080
   │
   ├─ CircuitBreaker     → 宠物服务熔断器状态: CLOSED
   │
-  └─ Route → http://localhost:8081/api/pet/status
+  └─ Route → lb://pet-habit-pet
          │
          ▼
-Server :8081
+宠物服务 :8083
   │
   ├─ GatewayHeaderAuthFilter → 读到 X-User-Id=123, X-User-Role=CHILD
   │                            构建 SecurityContext
@@ -179,7 +171,7 @@ Server :8081
   └─ Response ← { code: 200, data: {...} }
          │
          ▼
-Gateway :8080
+Gateway :8081
   │
   └─ RequestLogFilter → [a1b2c3d4] <-- GET 200 45ms
 ```
@@ -192,13 +184,13 @@ Gateway :8080
 
 | 路由 ID | 匹配路径 | 目标 | 限流 (r/s) | 熔断 | 鉴权 |
 |---------|----------|------|-----------|------|------|
-| auth | `/api/auth/**` | server:8081 | 无 | 无 | 白名单 |
-| user-service | `/api/user/**` | server:8081 | 10/20 | userCB | JWT |
-| pet-service | `/api/pet/**` | server:8081 | 10/20 | petCB | JWT |
-| habit-service | `/api/habit/**` | server:8081 | 10/20 | habitCB | JWT |
-| reward-service | `/api/reward/**` | server:8081 | 5/10 | rewardCB | JWT |
-| battle-service | `/api/battle/**` | server:8081 | 10/20 | battleCB | JWT |
-| websocket | `/ws/**` | server:8081 | 无 | 无 | 透传 |
+| auth | `/api/auth/**` | pet-habit-user:8082 | 无 | 无 | 白名单 |
+| user-service | `/api/user/**` | pet-habit-user:8082 | 10/20 | userCB | JWT |
+| pet-service | `/api/pet/**` | pet-habit-pet:8083 | 10/20 | petCB | JWT |
+| habit-service | `/api/habit/**` | pet-habit-habit:8084 | 10/20 | habitCB | JWT |
+| reward-service | `/api/reward/**` | pet-habit-reward:8085 | 5/10 | rewardCB | JWT |
+| battle-service | `/api/battle/**` | pet-habit-battle:8086 | 10/20 | battleCB | JWT |
+| websocket | `/ws/**` | pet-habit-pet:8083 | 无 | 无 | 透传 |
 
 > 限流格式: `replenishRate/burstCapacity`（令牌桶：每秒填充数 / 最大突发容量）
 
@@ -230,16 +222,16 @@ Gateway :8080
 ```yaml
 # 示例
 - id: pet-service
-  uri: lb://pet-habit-server          # ← 从 Nacos 发现，非硬编码 IP
+  uri: lb://pet-habit-pet          # ← 从 Nacos 发现，非硬编码 IP
   predicates:
     - Path=/api/pet/**
 ```
 
 **服务发现流程**:
 ```
-① Server 启动 → 向 Nacos 注册: pet-habit-server / 192.168.1.10:8081
-② Gateway 启动 → 向 Nacos 订阅: pet-habit-server 的实例列表
-③ 请求到达 Gateway → lb://pet-habit-server → LoadBalancer 选择实例
+① 各服务启动 → 向 Nacos 注册: pet-habit-user/pet/habit/reward/battle/config (6个独立服务)
+② Gateway 启动 → 向 Nacos 订阅所有 6 个服务的实例列表
+③ 请求到达 Gateway → lb://pet-habit-{svc} → LoadBalancer 选择实例
 ④ 实例下线 → Nacos 推送变更 → Gateway 自动剔除
 ```
 
@@ -401,7 +393,7 @@ resilience4j:
 
 **链路串联**:
 ```
-Client → Gateway (TraceId=a1b2) → Server (TraceId=a1b2) → MySQL
+Client → Gateway (TraceId=a1b2) → 微服务 (TraceId=a1b2) → MySQL
         所有日志都有同一个 TraceId
 ```
 
@@ -433,15 +425,15 @@ Client → Gateway (TraceId=a1b2) → Server (TraceId=a1b2) → MySQL
 
 **注册行为**:
 ```
-Server 启动 → Nacos 注册实例 {ip: "192.168.1.10", port: 8081, healthy: true}
+各服务启动 → Nacos 注册实例 {ip: "192.168.1.10", port: 8082-8087, healthy: true}
   ├── 每 5 秒发送心跳（临时实例）
   ├── 15 秒无心跳 → 标记不健康
   └── 30 秒无心跳 → 剔除实例
 
-Gateway 启动 → Nacos 订阅 "pet-habit-server" 服务
-  ├── 获得实例列表 [192.168.1.10:8081]
+Gateway 启动 → Nacos 订阅全部 6 个服务
+  ├── 获得各服务实例列表
   ├── 实例上线/下线 → 推送变更 → 本地缓存更新
-  └── lb://pet-habit-server → LoadBalancer 轮询选择
+  └── lb://pet-habit-{svc} → LoadBalancer 轮询选择
 ```
 
 **配置项**:
@@ -457,7 +449,7 @@ Gateway 启动 → Nacos 订阅 "pet-habit-server" 服务
 
 **配置优先级**: Nacos 远程 > 本地 application.yml（使用 `spring.config.import` 导入）
 
-**Data ID 命名规则**: `${spring.application.name}.yaml`
+**Data ID 命名规则**: `${spring.application.name}.yaml`（每个服务独立，如 `pet-habit-user.yaml`、`pet-habit-pet.yaml`）
 
 **热刷新**: 标注 `@RefreshScope` 的 Bean，Nacos 变更后自动刷新。示例：
 ```java
@@ -469,20 +461,17 @@ public class SomeController {
 }
 ```
 
-**Nacos 上的配置示例**（Data ID: `pet-habit-server.yaml`）:
+**Nacos 上的配置示例**（每个服务独立 Data ID，如 `pet-habit-user.yaml`、`pet-habit-pet.yaml` 等）:
 ```yaml
 # 数据库（可热修改）
 spring:
   datasource:
-    url: jdbc:mysql://prod-mysql:3306/pet_habit
+    url: jdbc:mysql://prod-mysql:3306/pet_habit_user
 
 # 业务参数（可热修改）
-habit:
-  review:
-    timeout-minutes: 120
-    auto-approve: true
-  streak:
-    trigger-idle-days: 2
+user:
+  registration:
+    open: true
 ```
 
 #### 多环境隔离
@@ -538,13 +527,13 @@ NACOS_NAMESPACE=prod
   │
   ├─ ④ 脱敏: password→***, phone→138****0000
   │
-  └─ ⑤ chain.filter 完成后 → 异步线程池写入 api_audit_log
+  └─ ⑤ chain.filter 完成后 → 异步线程池写入 gateway_audit_log
         线程池: 4-8线程, 队列500, 满时丢弃最旧
 ```
 
 #### 配置管理
 
-通过数据库表 `api_log_config` 动态控制，每 60 秒自动刷新缓存，无需重启：
+通过数据库表 `gateway_api_log_config` 动态控制，每 60 秒自动刷新缓存，无需重启：
 
 | 字段 | 说明 | 示例 |
 |------|------|------|
@@ -556,10 +545,10 @@ NACOS_NAMESPACE=prod
 
 ```sql
 -- 临时开启所有接口的请求报文记录
-INSERT INTO api_log_config VALUES ('/api/**', 1, 0, 2048, 1);
+INSERT INTO gateway_api_log_config VALUES ('/api/**', 1, 0, 2048, 1);
 
 -- 关闭宠物接口记录（响应体大）
-UPDATE api_log_config SET is_active = 0 WHERE path_pattern = '/api/pet/**';
+UPDATE gateway_api_log_config SET is_active = 0 WHERE path_pattern = '/api/pet/**';
 
 -- 60 秒内生效，无需重启
 ```
@@ -583,13 +572,13 @@ payload-log:
 
 ```sql
 -- 查看某个用户的所有操作
-SELECT * FROM api_audit_log WHERE user_id = 123 ORDER BY created_at DESC LIMIT 20;
+SELECT * FROM gateway_audit_log WHERE user_id = 123 ORDER BY created_at DESC LIMIT 20;
 
 -- 查看某个 TraceId 的完整链路
-SELECT * FROM api_audit_log WHERE trace_id = 'a1b2c3d4e5f67890';
+SELECT * FROM gateway_audit_log WHERE trace_id = 'a1b2c3d4e5f67890';
 
 -- 查看打卡接口的请求/响应（排查积分未到账）
-SELECT * FROM api_audit_log
+SELECT * FROM gateway_audit_log
 WHERE path LIKE '/api/habit/%' AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR);
 
 -- 保留 90 天，每日凌晨 4 点自动清理
@@ -631,7 +620,7 @@ WHERE path LIKE '/api/habit/%' AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)
 ├──────────────────────────────────┤
 │ 8. TimeLimiter                   │  超时控制 (3s)
 ├──────────────────────────────────┤
-│ 9. 转发至 Server :8081           │
+│ 9. 转发至对应微服务 (:8082-:8087)  │
 ├──────────────────────────────────┤
 │ 10. [Server 处理...]             │
 ├──────────────────────────────────┤
@@ -665,7 +654,7 @@ WHERE path LIKE '/api/habit/%' AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)
 
 ```yaml
 # ---- 服务器 ----
-server.port                                  # 默认 8080
+server.port                                  # 默认 8081
 
 # ---- Redis (限流依赖) ----
 spring.data.redis.host                       # 默认 localhost
@@ -716,7 +705,7 @@ management.tracing.sampling.probability       # 默认: 1.0 (全量采样)
 | Maven | 3.6.3+ | 项目构建 |
 | Nacos | 2.3.x | 注册中心 + 配置中心 |
 | Redis | 6+ | 限流令牌桶存储 |
-| MySQL | 8.0+ | 业务 server 依赖（网关本身不连 MySQL） |
+| MySQL | 8.0+ | 业务服务依赖（网关本身也连 `pet_habit_gateway` database 做审计日志） |
 
 ### 7.2 编译
 
@@ -735,9 +724,9 @@ mvn clean compile -pl pet-habit-gateway -am
 ```
 1. 启动 Nacos  (默认 localhost:8848, standalone 模式)
 2. 启动 Redis  (默认 localhost:6379)
-3. 启动 MySQL  (server 需要)
-4. 启动 pet-habit-server (port 8081, 自动注册到 Nacos)
-5. 启动 pet-habit-gateway (port 8080, 自动从 Nacos 发现服务)
+3. 启动 MySQL  (所有服务需要)
+4. 启动 6 个微服务 (:8082-8087, 自动注册到 Nacos)
+5. 启动 pet-habit-gateway (:8081, 自动从 Nacos 发现所有服务)
 ```
 
 ```bash
@@ -746,41 +735,42 @@ cd nacos/bin
 startup.cmd -m standalone
 # Nacos 控制台: http://localhost:8848/nacos (用户名/密码: nacos/nacos)
 
-# 终端 1 — 启动业务服务
-cd pet-habit-server
-mvn spring-boot:run
+# 终端 1-6 — 启动各业务服务
+mvn -pl pet-habit-service-user spring-boot:run
+mvn -pl pet-habit-service-pet spring-boot:run
+mvn -pl pet-habit-service-habit spring-boot:run
+mvn -pl pet-habit-service-reward spring-boot:run
+mvn -pl pet-habit-service-battle spring-boot:run
+mvn -pl pet-habit-service-config spring-boot:run
 
-# 终端 2 — 启动网关
-cd pet-habit-gateway
-mvn spring-boot:run
-# 或者指定 Nacos 地址
-mvn spring-boot:run -Dspring-boot.run.arguments="--spring.cloud.nacos.discovery.server-addr=192.168.1.100:8848 --jwt.secret=your-production-secret"
+# 终端 7 — 启动网关
+mvn -pl pet-habit-gateway spring-boot:run
 ```
 
 ### 7.4 验证
 
 ```bash
 # 健康检查
-curl http://localhost:8080/actuator/health
+curl http://localhost:8081/actuator/health
 # → {"status":"UP"}
 
 # 未认证请求 → 401
-curl http://localhost:8080/api/pet/status
+curl http://localhost:8081/api/pet/status
 # → {"code":401,"msg":"Missing or invalid Authorization header"}
 
 # 登录获取 Token（需要 server 端有 /api/auth/login 接口）
-curl -X POST http://localhost:8080/api/auth/login \
+curl -X POST http://localhost:8081/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"phone":"13800138000","password":"test123"}'
 # → {"code":200,"data":{"token":"eyJ..."}}
 
 # 携带 Token 访问受保护接口
-curl http://localhost:8080/api/pet/status \
+curl http://localhost:8081/api/pet/status \
   -H "Authorization: Bearer eyJ..."
 # → {"code":200,"data":{...}}
 
 # Prometheus 指标
-curl http://localhost:8080/actuator/prometheus
+curl http://localhost:8081/actuator/prometheus
 # → ...gateway_requests_seconds_count...
 ```
 
@@ -792,13 +782,13 @@ FROM eclipse-temurin:17-jre-alpine
 COPY target/pet-habit-gateway-0.0.1-SNAPSHOT.jar app.jar
 ENV JWT_SECRET=${JWT_SECRET}
 ENV REDIS_HOST=redis
-EXPOSE 8080
+EXPOSE 8081
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ```bash
 docker run -d \
-  -p 8080:8080 \
+  -p 8081:8081 \
   -e JWT_SECRET=prod-secret-xxxx \
   -e REDIS_HOST=redis \
   --name pet-habit-gateway \
@@ -814,10 +804,10 @@ docker run -d \
 | 现象 | 排查方向 |
 |------|---------|
 | 所有请求 401 | 检查 JWT secret 是否与登录接口签发时一致 |
-| 所有请求 503 | 检查 server:8081 是否启动，`/actuator/health` 是否 UP |
+| 所有请求 503 | 检查对应的微服务是否启动（:8082-:8087），`/actuator/health` 是否 UP |
 | 限流异常 (429 过多) | `redis-cli KEYS "request_rate_limiter*"` 查看令牌桶 Key |
 | 熔断频繁触发 | 检查 server 日志，排查慢查询或异常 |
-| 路由不生效 | `curl localhost:8080/actuator/gateway/routes` 查看实际路由 |
+| 路由不生效 | `curl localhost:8081/actuator/gateway/routes` 查看实际路由 |
 | Redis 连接失败 | 网关启动时检查 Redis 连通性，限流会降级为放过 |
 
 ### 8.2 日志级别调整

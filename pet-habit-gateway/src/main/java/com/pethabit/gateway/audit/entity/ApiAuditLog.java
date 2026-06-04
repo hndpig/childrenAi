@@ -7,7 +7,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("api_audit_log")
+@TableName("gateway_api_audit_log")
 public class ApiAuditLog {
     @TableId(type = IdType.AUTO)
     private Long id;

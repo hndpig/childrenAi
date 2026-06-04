@@ -1,19 +1,25 @@
 -- ================================================================
--- Pet-Habit 数据库初始化脚本 v3.3
--- 依据: PRD-需求规格.md (2026-05-27)
--- v3.3 变更: 新增 system_config/streak_bonus_config 表, pet_species 增加蛋池管理字段
+-- Pet-Habit 数据库初始化脚本 v4.0（微服务拆分版）
+-- 每个微服务使用独立 database，共享同一 MySQL 实例
 -- 运行: mysql -u root -p < schema.sql
 -- ================================================================
 
-CREATE DATABASE IF NOT EXISTS pet_habit CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE pet_habit;
+-- ================================================================
+-- 0. 用户服务 (pet-habit-service-user :8082)
+--    数据库: pet_habit_user
+--    包含: user_account, user_device, user_parent_child_binding,
+--          user_friendship, common_notification, common_notification_preference
+-- ================================================================
+CREATE DATABASE IF NOT EXISTS pet_habit_user CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE pet_habit_user;
 
 -- ================================================================
--- 1. 用户与家庭（用户服务）
+-- 0.1 用户与家庭（用户服务）
+-- ================================================================
 -- ================================================================
 
 -- 用户表（家长 + 孩子统一存储，role 区分）
-CREATE TABLE IF NOT EXISTS `user` (
+CREATE TABLE IF NOT EXISTS `user_account` (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     phone           VARCHAR(20)   COMMENT '手机号（家长必填，孩子可选）',
     password        VARCHAR(255)  COMMENT 'BCrypt 密文',
@@ -31,7 +37,7 @@ CREATE TABLE IF NOT EXISTS `user` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表（家长通过微信小程序登录，孩子通过设备平台登录）';
 
 -- 设备绑定表（手表端设备，平台抽象层）
-CREATE TABLE IF NOT EXISTS device (
+CREATE TABLE IF NOT EXISTS user_device (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     child_id        BIGINT NOT NULL COMMENT '关联 child user.id',
     platform        ENUM('XTC','HUAWEI','XIAOMI','APPLE') NOT NULL COMMENT '手表平台：XTC=小天才',
@@ -44,11 +50,11 @@ CREATE TABLE IF NOT EXISTS device (
     updated_at      DATETIME    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_device (platform, device_id),
     INDEX idx_child (child_id),
-    CONSTRAINT fk_device_child FOREIGN KEY (child_id) REFERENCES `user`(id)
+    CONSTRAINT fk_device_child FOREIGN KEY (child_id) REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='设备绑定（手表平台抽象层：小天才优先，预留华为/小米/Apple Watch）';
 
 -- 家长-孩子绑定关系（双向：一个家长可绑多个孩子，一个孩子可被多位家长管理）
-CREATE TABLE IF NOT EXISTS parent_child_binding (
+CREATE TABLE IF NOT EXISTS user_parent_child_binding (
     id          BIGINT AUTO_INCREMENT PRIMARY KEY,
     parent_id   BIGINT NOT NULL COMMENT '家长 user.id',
     child_id    BIGINT NOT NULL COMMENT '孩子 user.id',
@@ -56,15 +62,15 @@ CREATE TABLE IF NOT EXISTS parent_child_binding (
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_parent_child (parent_id, child_id),
     INDEX idx_child (child_id),
-    CONSTRAINT fk_binding_parent FOREIGN KEY (parent_id) REFERENCES `user`(id),
-    CONSTRAINT fk_binding_child  FOREIGN KEY (child_id)  REFERENCES `user`(id)
+    CONSTRAINT fk_binding_parent FOREIGN KEY (parent_id) REFERENCES `user_account`(id),
+    CONSTRAINT fk_binding_child  FOREIGN KEY (child_id)  REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='家长-孩子绑定（家庭管理核心表）';
 
 -- ================================================================
 -- 2. 好友系统（用户服务）
 -- ================================================================
 
-CREATE TABLE IF NOT EXISTS friendship (
+CREATE TABLE IF NOT EXISTS user_friendship (
     id          BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id     BIGINT NOT NULL COMMENT '发起方 user.id',
     friend_id   BIGINT NOT NULL COMMENT '好友 user.id',
@@ -72,12 +78,23 @@ CREATE TABLE IF NOT EXISTS friendship (
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_friendship (user_id, friend_id),
     INDEX idx_friend (friend_id),
-    CONSTRAINT fk_friendship_user   FOREIGN KEY (user_id)   REFERENCES `user`(id),
-    CONSTRAINT fk_friendship_friend FOREIGN KEY (friend_id) REFERENCES `user`(id)
+    CONSTRAINT fk_friendship_user   FOREIGN KEY (user_id)   REFERENCES `user_account`(id),
+    CONSTRAINT fk_friendship_friend FOREIGN KEY (friend_id) REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='好友关系（蓝牙加好友，云端同步）';
 
 -- ================================================================
--- 3. 宠物系统（宠物服务）
+-- 1. 宠物服务 (pet-habit-service-pet :8083)
+--    数据库: pet_habit_pet
+--    包含: pet_species, pet, pet_evolution_log, pet_incubation_task,
+--          pet_schedule, pet_skill_def, pet_skill_rel,
+--          pet_personality_question, pet_personality_result,
+--          pet_ai_conversation, pet_interaction
+-- ================================================================
+CREATE DATABASE IF NOT EXISTS pet_habit_pet CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE pet_habit_pet;
+
+-- ================================================================
+-- 1.1 宠物系统（宠物服务）
 -- ================================================================
 
 -- 宠物图鉴（所有可获得的宠物种类定义）
@@ -178,7 +195,7 @@ CREATE TABLE IF NOT EXISTS pet (
     INDEX idx_child (child_id),
     INDEX idx_active (child_id, is_active),
     INDEX idx_species (species_id),
-    CONSTRAINT fk_pet_child   FOREIGN KEY (child_id)   REFERENCES `user`(id),
+    CONSTRAINT fk_pet_child   FOREIGN KEY (child_id)   REFERENCES `user_account`(id),
     CONSTRAINT fk_pet_species FOREIGN KEY (species_id) REFERENCES pet_species(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='宠物实例（用户养成的具体宠物）';
 
@@ -195,7 +212,7 @@ CREATE TABLE IF NOT EXISTS pet_evolution_log (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='宠物进化记录';
 
 -- 宠物孵化任务（家长为孵化期的蛋设置的小任务）
-CREATE TABLE IF NOT EXISTS incubation_task (
+CREATE TABLE IF NOT EXISTS pet_incubation_task (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     pet_id          BIGINT NOT NULL COMMENT '宠物实例 pet.id（需处于 EGG 阶段）',
     parent_id       BIGINT NOT NULL COMMENT '创建任务的家长 user.id',
@@ -206,7 +223,7 @@ CREATE TABLE IF NOT EXISTS incubation_task (
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_pet (pet_id),
     CONSTRAINT fk_incubation_pet    FOREIGN KEY (pet_id)    REFERENCES pet(id),
-    CONSTRAINT fk_incubation_parent FOREIGN KEY (parent_id) REFERENCES `user`(id)
+    CONSTRAINT fk_incubation_parent FOREIGN KEY (parent_id) REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='孵化任务（家长为蛋期设置的加速孵化小任务）';
 
 -- 宠物作息配置（家长设置，避免影响孩子上课/休息）
@@ -226,7 +243,7 @@ CREATE TABLE IF NOT EXISTS pet_schedule (
 -- ================================================================
 
 -- 技能库（所有可学习技能的元数据）
-CREATE TABLE IF NOT EXISTS skill (
+CREATE TABLE IF NOT EXISTS pet_skill_def (
     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
     name                VARCHAR(50)  NOT NULL COMMENT '技能名称',
     type                ENUM('ATTACK','DEFENSE','HEAL','BUFF','DEBUFF') NOT NULL COMMENT '技能类型',
@@ -250,7 +267,7 @@ CREATE TABLE IF NOT EXISTS skill (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='技能库（所有可学习技能的元数据定义）';
 
 -- 宠物已学技能关联
-CREATE TABLE IF NOT EXISTS pet_skill (
+CREATE TABLE IF NOT EXISTS pet_skill_rel (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     pet_id          BIGINT NOT NULL COMMENT '宠物实例 pet.id',
     skill_id        BIGINT NOT NULL COMMENT '技能 skill.id',
@@ -262,7 +279,7 @@ CREATE TABLE IF NOT EXISTS pet_skill (
     INDEX idx_pet (pet_id),
     INDEX idx_equipped (pet_id, is_equipped),
     CONSTRAINT fk_pet_skill_pet   FOREIGN KEY (pet_id)   REFERENCES pet(id),
-    CONSTRAINT fk_pet_skill_skill FOREIGN KEY (skill_id) REFERENCES skill(id)
+    CONSTRAINT fk_pet_skill_skill FOREIGN KEY (skill_id) REFERENCES pet_skill_def(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='宠物技能关联（+12个学习位 learn_order + 4个战斗装备槽 is_equipped）';
 
 -- ================================================================
@@ -270,7 +287,7 @@ CREATE TABLE IF NOT EXISTS pet_skill (
 -- ================================================================
 
 -- 性格测试题库（大五人格儿童版）
-CREATE TABLE IF NOT EXISTS personality_question (
+CREATE TABLE IF NOT EXISTS pet_personality_question (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     question_text   VARCHAR(500) NOT NULL COMMENT '题目文本',
     options_json    JSON NOT NULL COMMENT '选项列表 JSON: [{"text":"非常同意","dimension":"O","score":5},...]',
@@ -280,7 +297,7 @@ CREATE TABLE IF NOT EXISTS personality_question (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='性格测试题库（大五人格儿童版，持续迭代）';
 
 -- 性格测试结果
-CREATE TABLE IF NOT EXISTS personality_result (
+CREATE TABLE IF NOT EXISTS pet_personality_result (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     child_id        BIGINT NOT NULL COMMENT '被测孩子 user.id',
     pet_id          BIGINT COMMENT '关联的宠物（选蛋后测试，测试完成后创建宠物）',
@@ -289,12 +306,20 @@ CREATE TABLE IF NOT EXISTS personality_result (
     dimension_scores JSON COMMENT '各维度得分 {"O":85,"C":60,"E":70,"A":80,"N":40}',
     tested_at       DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '测试时间',
     INDEX idx_child (child_id),
-    CONSTRAINT fk_personality_child FOREIGN KEY (child_id) REFERENCES `user`(id),
+    CONSTRAINT fk_personality_child FOREIGN KEY (child_id) REFERENCES `user_account`(id),
     CONSTRAINT fk_personality_pet   FOREIGN KEY (pet_id)   REFERENCES pet(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='性格测试结果（领养前测试，结果决定宠物初始性格）';
 
 -- ================================================================
--- 6. 习惯系统（习惯服务）
+-- 2. 习惯服务 (pet-habit-service-habit :8084)
+--    数据库: pet_habit_habit
+--    包含: habit_template, habit, habit_log
+-- ================================================================
+CREATE DATABASE IF NOT EXISTS pet_habit_habit CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE pet_habit_habit;
+
+-- ================================================================
+-- 2.1 习惯系统（习惯服务）
 -- ================================================================
 
 -- 习惯模板（预设模板库，家长可直接选用或参考）
@@ -334,8 +359,8 @@ CREATE TABLE IF NOT EXISTS habit (
     INDEX idx_child (child_id),
     INDEX idx_parent_child (parent_id, child_id),
     INDEX idx_category (child_id, category),
-    CONSTRAINT fk_habit_parent   FOREIGN KEY (parent_id)   REFERENCES `user`(id),
-    CONSTRAINT fk_habit_child    FOREIGN KEY (child_id)    REFERENCES `user`(id),
+    CONSTRAINT fk_habit_parent   FOREIGN KEY (parent_id)   REFERENCES `user_account`(id),
+    CONSTRAINT fk_habit_child    FOREIGN KEY (child_id)    REFERENCES `user_account`(id),
     CONSTRAINT fk_habit_template FOREIGN KEY (template_id) REFERENCES habit_template(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='习惯定义（家长自定义，按孩子分配）';
 
@@ -356,16 +381,25 @@ CREATE TABLE IF NOT EXISTS habit_log (
     INDEX idx_status (status, created_at),
     INDEX idx_reviewed (status, reviewed_by, reviewed_at),
     CONSTRAINT fk_habit_log_habit    FOREIGN KEY (habit_id)    REFERENCES habit(id),
-    CONSTRAINT fk_habit_log_child    FOREIGN KEY (child_id)    REFERENCES `user`(id),
-    CONSTRAINT fk_habit_log_reviewer FOREIGN KEY (reviewed_by) REFERENCES `user`(id)
+    CONSTRAINT fk_habit_log_child    FOREIGN KEY (child_id)    REFERENCES `user_account`(id),
+    CONSTRAINT fk_habit_log_reviewer FOREIGN KEY (reviewed_by) REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='习惯打卡记录（打卡→待审核→通过/驳回/超时自动通过）';
 
 -- ================================================================
--- 7. 积分与兑换（积分兑换服务）
+-- 3. 积分兑换服务 (pet-habit-service-reward :8085)
+--    数据库: pet_habit_reward
+--    包含: reward_point_account, reward_point_transaction, reward_item,
+--          reward_redemption, reward_achievement, reward_user_achievement
+-- ================================================================
+CREATE DATABASE IF NOT EXISTS pet_habit_reward CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE pet_habit_reward;
+
+-- ================================================================
+-- 3.1 积分与兑换（积分兑换服务）
 -- ================================================================
 
 -- 积分账户
-CREATE TABLE IF NOT EXISTS point_account (
+CREATE TABLE IF NOT EXISTS reward_point_account (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     child_id        BIGINT NOT NULL UNIQUE COMMENT '所属孩子 user.id',
     balance         INT DEFAULT 0  COMMENT '当前可用积分',
@@ -376,11 +410,11 @@ CREATE TABLE IF NOT EXISTS point_account (
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_child (child_id),
-    CONSTRAINT fk_point_account_child FOREIGN KEY (child_id) REFERENCES `user`(id)
+    CONSTRAINT fk_point_account_child FOREIGN KEY (child_id) REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='积分账户（一对一关联孩子，独立货币体系）';
 
 -- 积分流水
-CREATE TABLE IF NOT EXISTS point_transaction (
+CREATE TABLE IF NOT EXISTS reward_point_transaction (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     child_id        BIGINT NOT NULL COMMENT '所属孩子 user.id',
     amount          INT NOT NULL COMMENT '变动金额（正数=收入，负数=支出）',
@@ -393,11 +427,11 @@ CREATE TABLE IF NOT EXISTS point_transaction (
     INDEX idx_child (child_id),
     INDEX idx_created (child_id, created_at),
     INDEX idx_type (type),
-    CONSTRAINT fk_point_txn_child FOREIGN KEY (child_id) REFERENCES `user`(id)
+    CONSTRAINT fk_point_txn_child FOREIGN KEY (child_id) REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='积分流水（完整收支记录，支持审计追踪）';
 
 -- 奖励池（家长设置的可兑换奖励）
-CREATE TABLE IF NOT EXISTS reward (
+CREATE TABLE IF NOT EXISTS reward_item (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     parent_id       BIGINT NOT NULL COMMENT '设置奖励的家长 user.id',
     child_id        BIGINT       COMMENT '限定兑换人（NULL=该家长下所有孩子均可兑）',
@@ -413,12 +447,12 @@ CREATE TABLE IF NOT EXISTS reward (
     INDEX idx_parent (parent_id),
     INDEX idx_child (child_id),
     INDEX idx_active (parent_id, is_active),
-    CONSTRAINT fk_reward_parent FOREIGN KEY (parent_id) REFERENCES `user`(id),
-    CONSTRAINT fk_reward_child  FOREIGN KEY (child_id)  REFERENCES `user`(id)
+    CONSTRAINT fk_reward_parent FOREIGN KEY (parent_id) REFERENCES `user_account`(id),
+    CONSTRAINT fk_reward_child  FOREIGN KEY (child_id)  REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='奖励池（家长设置，孩子浏览兑换）';
 
 -- 兑换记录
-CREATE TABLE IF NOT EXISTS redemption (
+CREATE TABLE IF NOT EXISTS reward_redemption (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     child_id        BIGINT NOT NULL COMMENT '兑换孩子 user.id',
     reward_id       BIGINT NOT NULL COMMENT '奖励 reward.id',
@@ -432,13 +466,21 @@ CREATE TABLE IF NOT EXISTS redemption (
     INDEX idx_child (child_id),
     INDEX idx_status (status),
     INDEX idx_child_status (child_id, status),
-    CONSTRAINT fk_redemption_child    FOREIGN KEY (child_id)    REFERENCES `user`(id),
-    CONSTRAINT fk_redemption_reward   FOREIGN KEY (reward_id)   REFERENCES reward(id),
-    CONSTRAINT fk_redemption_reviewer FOREIGN KEY (reviewed_by) REFERENCES `user`(id)
+    CONSTRAINT fk_redemption_child    FOREIGN KEY (child_id)    REFERENCES `user_account`(id),
+    CONSTRAINT fk_redemption_reward   FOREIGN KEY (reward_id)   REFERENCES reward_item(id),
+    CONSTRAINT fk_redemption_reviewer FOREIGN KEY (reviewed_by) REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='兑换记录（孩子申请→家长审核→兑现）';
 
 -- ================================================================
--- 8. 对战系统（对战服务）
+-- 4. 对战服务 (pet-habit-service-battle :8086)
+--    数据库: pet_habit_battle
+--    包含: battle_record, battle_round
+-- ================================================================
+CREATE DATABASE IF NOT EXISTS pet_habit_battle CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE pet_habit_battle;
+
+-- ================================================================
+-- 4.1 对战系统（对战服务）
 -- ================================================================
 
 -- 对战记录
@@ -457,11 +499,11 @@ CREATE TABLE IF NOT EXISTS battle_record (
     INDEX idx_opponent (opponent_id),
     INDEX idx_winner (winner_id),
     INDEX idx_battled_at (battled_at),
-    CONSTRAINT fk_battle_initiator     FOREIGN KEY (initiator_id)     REFERENCES `user`(id),
-    CONSTRAINT fk_battle_opponent      FOREIGN KEY (opponent_id)      REFERENCES `user`(id),
+    CONSTRAINT fk_battle_initiator     FOREIGN KEY (initiator_id)     REFERENCES `user_account`(id),
+    CONSTRAINT fk_battle_opponent      FOREIGN KEY (opponent_id)      REFERENCES `user_account`(id),
     CONSTRAINT fk_battle_initiator_pet FOREIGN KEY (initiator_pet_id) REFERENCES pet(id),
     CONSTRAINT fk_battle_opponent_pet  FOREIGN KEY (opponent_pet_id)  REFERENCES pet(id),
-    CONSTRAINT fk_battle_winner        FOREIGN KEY (winner_id)        REFERENCES `user`(id)
+    CONSTRAINT fk_battle_winner        FOREIGN KEY (winner_id)        REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='对战记录（蓝牙本地对战/好友异步对战）';
 
 -- 对战回合详情
@@ -476,8 +518,8 @@ CREATE TABLE IF NOT EXISTS battle_round (
     defender_hp_remaining   INT          COMMENT '受击方剩余 HP',
     INDEX idx_battle (battle_id),
     CONSTRAINT fk_round_battle   FOREIGN KEY (battle_id)   REFERENCES battle_record(id),
-    CONSTRAINT fk_round_attacker FOREIGN KEY (attacker_id)  REFERENCES `user`(id),
-    CONSTRAINT fk_round_skill    FOREIGN KEY (skill_id)     REFERENCES skill(id)
+    CONSTRAINT fk_round_attacker FOREIGN KEY (attacker_id)  REFERENCES `user_account`(id),
+    CONSTRAINT fk_round_skill    FOREIGN KEY (skill_id)     REFERENCES pet_skill_def(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='对战回合详情（回合制逐回合记录）';
 
 -- ================================================================
@@ -503,7 +545,7 @@ CREATE TABLE IF NOT EXISTS pet_interaction (
 -- ================================================================
 
 -- 成就定义
-CREATE TABLE IF NOT EXISTS achievement (
+CREATE TABLE IF NOT EXISTS reward_achievement (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     name            VARCHAR(100) NOT NULL COMMENT '成就名称',
     description     VARCHAR(300) COMMENT '成就描述',
@@ -514,15 +556,15 @@ CREATE TABLE IF NOT EXISTS achievement (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='成就定义（条件达成自动解锁）';
 
 -- 用户成就
-CREATE TABLE IF NOT EXISTS user_achievement (
+CREATE TABLE IF NOT EXISTS reward_user_achievement (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     child_id        BIGINT NOT NULL COMMENT '获得成就的孩子 user.id',
     achievement_id  BIGINT NOT NULL COMMENT '成就 achievement.id',
     unlocked_at     DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '解锁时间',
     UNIQUE KEY uk_user_achieve (child_id, achievement_id),
     INDEX idx_child (child_id),
-    CONSTRAINT fk_user_achieve_child  FOREIGN KEY (child_id)       REFERENCES `user`(id),
-    CONSTRAINT fk_user_achieve_ach    FOREIGN KEY (achievement_id) REFERENCES achievement(id)
+    CONSTRAINT fk_user_achieve_child  FOREIGN KEY (child_id)       REFERENCES `user_account`(id),
+    CONSTRAINT fk_user_achieve_ach    FOREIGN KEY (achievement_id) REFERENCES reward_achievement(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户成就（记录孩子获得的成就勋章）';
 
 -- ================================================================
@@ -530,7 +572,7 @@ CREATE TABLE IF NOT EXISTS user_achievement (
 -- ================================================================
 
 -- AI 对话历史（敏感数据：儿童语音/文字对话记录）
-CREATE TABLE IF NOT EXISTS ai_conversation (
+CREATE TABLE IF NOT EXISTS pet_ai_conversation (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     child_id        BIGINT NOT NULL COMMENT '对话孩子 user.id --敏感字段',
     pet_id          BIGINT       COMMENT '当前对话宠物 pet.id',
@@ -543,12 +585,12 @@ CREATE TABLE IF NOT EXISTS ai_conversation (
     INDEX idx_child_pet (child_id, pet_id),
     INDEX idx_created (created_at),
     INDEX idx_child_created (child_id, created_at),
-    CONSTRAINT fk_ai_conv_child FOREIGN KEY (child_id) REFERENCES `user`(id),
+    CONSTRAINT fk_ai_conv_child FOREIGN KEY (child_id) REFERENCES `user_account`(id),
     CONSTRAINT fk_ai_conv_pet   FOREIGN KEY (pet_id)   REFERENCES pet(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI对话历史（儿童隐私数据，仅保留最近30天）';
 
 -- 通知/推送记录
-CREATE TABLE IF NOT EXISTS notification (
+CREATE TABLE IF NOT EXISTS common_notification (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id         BIGINT NOT NULL COMMENT '接收用户 user.id',
     type            ENUM('HABIT_REMIND','REVIEW_ALERT','REDEEM_ALERT','MOOD_PUSH','BATTLE_INVITE','PET_AWAKE','PET_SLEEP','STREAK_MILESTONE','FRIEND_REQUEST') NOT NULL COMMENT '通知类型',
@@ -561,11 +603,11 @@ CREATE TABLE IF NOT EXISTS notification (
     INDEX idx_user (user_id, created_at),
     INDEX idx_unread (user_id, is_read, created_at),
     INDEX idx_type (type),
-    CONSTRAINT fk_notification_user FOREIGN KEY (user_id) REFERENCES `user`(id)
+    CONSTRAINT fk_notification_user FOREIGN KEY (user_id) REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通知记录（习惯提醒/审核通知/情绪推送/对战通知）';
 
 -- 用户通知偏好设置（PRD 5.1 家长端"通知偏好"）
-CREATE TABLE IF NOT EXISTS notification_preference (
+CREATE TABLE IF NOT EXISTS common_notification_preference (
     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id             BIGINT NOT NULL UNIQUE COMMENT '用户 user.id',
     habit_remind        TINYINT(1) DEFAULT 1 COMMENT '习惯提醒推送开关',
@@ -579,15 +621,23 @@ CREATE TABLE IF NOT EXISTS notification_preference (
     friend_request      TINYINT(1) DEFAULT 1 COMMENT '好友申请推送开关',
     created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT fk_notif_pref_user FOREIGN KEY (user_id) REFERENCES `user`(id)
+    CONSTRAINT fk_notif_pref_user FOREIGN KEY (user_id) REFERENCES `user_account`(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户通知偏好设置（家长/孩子均可按类型开关推送）';
 
 -- ================================================================
--- 12. 系统配置（通用模块）
+-- 5. 系统配置服务 (pet-habit-service-config :8087)
+--    数据库: pet_habit_config
+--    包含: config_system, config_streak_bonus
+-- ================================================================
+CREATE DATABASE IF NOT EXISTS pet_habit_config CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE pet_habit_config;
+
+-- ================================================================
+-- 5.1 系统配置
 -- ================================================================
 
 -- 系统配置表（key-value 通用配置，积分/经验计算规则等）
-CREATE TABLE IF NOT EXISTS system_config (
+CREATE TABLE IF NOT EXISTS config_system (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     config_key      VARCHAR(100) NOT NULL COMMENT '配置键',
     config_value    VARCHAR(500) NOT NULL COMMENT '配置值',
@@ -599,7 +649,7 @@ CREATE TABLE IF NOT EXISTS system_config (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统配置（key-value 通用表，存储积分/经验计算规则、业务阈值等）';
 
 -- 连续打卡加成阶梯配置（PRD 2.4 连续打卡加成: Day1-2=1.0x, Day3-6=1.2x, Day7-13=1.5x, Day14-29=2.0x, Day30+=3.0x）
-CREATE TABLE IF NOT EXISTS streak_bonus_config (
+CREATE TABLE IF NOT EXISTS config_streak_bonus (
     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
     name                VARCHAR(50) NOT NULL COMMENT '阶梯名称（如"坚持新手"、"习惯养成"）',
     min_days            INT NOT NULL COMMENT '起始天数（含）',
@@ -719,11 +769,19 @@ INSERT INTO streak_bonus_config (name, min_days, max_days, xp_multiplier, point_
 ('自律达人', 30, 999,3.0, 3.0, 'Day30+ 顶级连续打卡加成（999=无上限）', 5);
 
 -- ================================================================
--- 12. API 网关审计（网关服务直接写入）
+-- 6. 网关审计 (pet-habit-gateway :8081)
+--    数据库: pet_habit_gateway
+--    包含: gateway_api_log_config, gateway_api_audit_log
+-- ================================================================
+CREATE DATABASE IF NOT EXISTS pet_habit_gateway CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE pet_habit_gateway;
+
+-- ================================================================
+-- 6.1 API 网关审计（网关服务直接写入）
 -- ================================================================
 
 -- 接口记录配置（控制哪些路径需要记录报文）
-CREATE TABLE IF NOT EXISTS api_log_config (
+CREATE TABLE IF NOT EXISTS gateway_api_log_config (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     path_pattern    VARCHAR(200) NOT NULL COMMENT '路径模式，支持*通配，如 /api/habit/*',
     log_request     TINYINT(1) DEFAULT 1 COMMENT '是否记录请求体',
@@ -737,7 +795,7 @@ CREATE TABLE IF NOT EXISTS api_log_config (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='API报文记录配置（控制哪些接口需要审计）';
 
 -- 接口审计记录（请求+响应报文，异步写入）
-CREATE TABLE IF NOT EXISTS api_audit_log (
+CREATE TABLE IF NOT EXISTS gateway_api_audit_log (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     trace_id        VARCHAR(32)  COMMENT '链路追踪 ID',
     user_id         BIGINT       COMMENT '操作人 user.id（未登录为 NULL）',
@@ -780,7 +838,7 @@ INSERT INTO api_log_config (path_pattern, log_request, log_response, max_body_si
 --   在 Spring Boot 中通过 @Scheduled 注解实现定时清理
 --   优势：不依赖 MySQL event_scheduler，便于监控和日志追踪
 --   示例：@Scheduled(cron = "0 0 3 * * ?")  // 每天凌晨3点
---   DELETE FROM ai_conversation WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)
+--   DELETE FROM pet_ai_conversation WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)
 
 -- 启用 MySQL 事件调度器（生产环境建议在 my.cnf 中配置）
 -- SET GLOBAL event_scheduler = ON;
@@ -793,7 +851,7 @@ STARTS TIMESTAMP(CURRENT_DATE, '03:00:00')
 ON COMPLETION PRESERVE
 COMMENT '每日凌晨3点自动清理超过30天的AI对话记录（儿童隐私合规）'
 DO
-  DELETE FROM ai_conversation WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+  DELETE FROM pet_ai_conversation WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
 
 -- 审计日志 90 天自动清理
 DROP EVENT IF EXISTS clean_old_audit_logs;
@@ -803,4 +861,4 @@ STARTS TIMESTAMP(CURRENT_DATE, '04:00:00')
 ON COMPLETION PRESERVE
 COMMENT '每日凌晨4点自动清理超过90天的API审计日志'
 DO
-  DELETE FROM api_audit_log WHERE created_at < DATE_SUB(NOW(), INTERVAL 90 DAY);
+  DELETE FROM gateway_api_audit_log WHERE created_at < DATE_SUB(NOW(), INTERVAL 90 DAY);

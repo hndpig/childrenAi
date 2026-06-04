@@ -9,6 +9,6 @@ import java.util.List;
 @Mapper
 public interface ApiLogConfigMapper extends BaseMapper<ApiLogConfig> {
 
-    @Select("SELECT * FROM api_log_config WHERE is_active = 1")
+    @Select("SELECT * FROM gateway_api_log_config WHERE is_active = 1")
     List<ApiLogConfig> findAllActive();
 }
